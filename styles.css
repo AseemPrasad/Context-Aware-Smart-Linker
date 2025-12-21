@@ -1,0 +1,22 @@
+.casl-ai-button {
+  position: absolute;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  z-index: 999999;
+}
+
+.casl-tooltip {
+  position: absolute;
+  max-width: 320px;
+  padding: 12px;
+  background: rgba(30, 30, 30, 0.95);
+  color: white;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  z-index: 999999;
+}

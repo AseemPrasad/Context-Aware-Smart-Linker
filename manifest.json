@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "CASL – Context Aware Smart Linker",
+  "version": "1.0",
+  "description": "Instant AI explanations for highlighted text.",
+
+  "permissions": ["storage"],
+
+  "host_permissions": [
+    "https://api.groq.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+}
