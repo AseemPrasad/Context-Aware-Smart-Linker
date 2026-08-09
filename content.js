@@ -4,6 +4,10 @@ let tooltip = null;
 let cachedText = "";
 let cachedContext = "";
 
+// Optional tenant identifier for the backend retrieval engine.
+// Current behavior is unchanged when left as the default.
+let cachedTenantId = "default";
+
 console.log("✅ CASL content script loaded");
 
 document.addEventListener("selectionchange", () => {
@@ -53,7 +57,8 @@ function showButton(rect) {
           payload: {
             term: cachedText,
             title: document.title,
-            paragraph: cachedContext
+            paragraph: cachedContext,
+            tenantId: cachedTenantId
           }
         },
         (response) => {
