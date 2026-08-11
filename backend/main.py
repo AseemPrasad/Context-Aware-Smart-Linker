@@ -64,3 +64,15 @@ async def telemetry_metrics() -> dict:
 
     budget_manager = get_token_budget_manager()
     return budget_manager.get_metrics()
+
+
+@app.get("/evals/metrics")
+async def evals_metrics() -> dict:
+    """Get latest evaluation metrics (if evaluation enabled)."""
+    try:
+        from evals.eval_harness import get_harness
+
+        harness = get_harness()
+        return harness.get_latest_metrics()
+    except ImportError:
+        return {"error": "Evaluation module not available", "enabled": False}
