@@ -18,6 +18,7 @@ from backend.cache.redis_client import get_redis_client
 from backend.core.config import get_cache_config
 from backend.core.encoder import get_encoder
 from backend.schemas.retrieval import SearchRequest, SearchResponse
+from backend.observability.tracer import get_tracer
 
 
 class SemanticCache:
@@ -61,23 +62,41 @@ class SemanticCache:
         if not self.redis.is_enabled:
             return None
 
-        # Tier 1: Exact hash match
-        exact_key = self._cache_key_exact(request)
-        cached_json = self.redis.get(exact_key)
+        tracer = get_tracer()
+        start_time = time.time()
 
-        if cached_json:
-            self._hit_count += 1
-            data = json.loads(cached_json)
-            return SearchResponse(**data["search_response"])
+        with tracer.start_as_current_span("cache.lookup") as span:
+            span.set_attribute("query_hash", self._compute_hash(request))
 
-        # Tier 2: Semantic vector similarity match
-        cached = self._semantic_match(request)
-        if cached:
-            self._hit_count += 1
-            return cached
+            # Tier 1: Exact hash match
+            exact_key = self._cache_key_exact(request)
+            cached_json = self.redis.get(exact_key)
 
-        self._miss_count += 1
-        return None
+            if cached_json:
+                self._hit_count += 1
+                latency_ms = (time.time() - start_time) * 1000
+                span.set_attribute("cache_tier", "exact")
+                span.set_attribute("hit", True)
+                span.set_attribute("latency_ms", round(latency_ms, 2))
+                data = json.loads(cached_json)
+                return SearchResponse(**data["search_response"])
+
+            # Tier 2: Semantic vector similarity match
+            cached = self._semantic_match(request)
+            if cached:
+                self._hit_count += 1
+                latency_ms = (time.time() - start_time) * 1000
+                span.set_attribute("cache_tier", "vector")
+                span.set_attribute("hit", True)
+                span.set_attribute("latency_ms", round(latency_ms, 2))
+                return cached
+
+            self._miss_count += 1
+            latency_ms = (time.time() - start_time) * 1000
+            span.set_attribute("cache_tier", "none")
+            span.set_attribute("hit", False)
+            span.set_attribute("latency_ms", round(latency_ms, 2))
+            return None
 
     def _semantic_match(self, request: SearchRequest) -> SearchResponse | None:
         """Find semantically similar cached query within threshold."""
@@ -129,40 +148,53 @@ class SemanticCache:
         if not self.redis.is_enabled:
             return False
 
-        try:
-            encoder = self._get_encoder()
-            query_vec = encoder.encode([request.query])[0]
-            query_vec = [float(x) for x in query_vec]
+        tracer = get_tracer()
+        start_time = time.time()
 
-            # Tier 1: Exact hash entry
-            exact_key = self._cache_key_exact(request)
-            payload = {
-                "embedding": query_vec,
-                "search_response": response.model_dump(),
-                "cached_at": time.time(),
-            }
-            self.redis.set(exact_key, json.dumps(payload), ex=self.config.cache_ttl)
+        with tracer.start_as_current_span("cache.write") as span:
+            try:
+                encoder = self._get_encoder()
+                query_vec = encoder.encode([request.query])[0]
+                query_vec = [float(x) for x in query_vec]
 
-            # Tier 2: Vector similarity entry (indexed by tenant + timestamp-based index)
-            timestamp_idx = int(time.time() * 1000000) % 1000000
-            vector_key = self._cache_key_vector(request.tenant_id, timestamp_idx)
-            self.redis.set(vector_key, json.dumps(payload), ex=self.config.cache_ttl)
+                # Tier 1: Exact hash entry
+                exact_key = self._cache_key_exact(request)
+                payload = {
+                    "embedding": query_vec,
+                    "search_response": response.model_dump(),
+                    "cached_at": time.time(),
+                }
+                payload_json = json.dumps(payload)
+                size_bytes = len(payload_json.encode())
 
-            # Track vector indices for this tenant
-            vectors_list_key = self._cache_key_vectors_list(request.tenant_id)
-            existing = self.redis.get(vectors_list_key)
-            indices = json.loads(existing) if existing else []
-            indices.append(timestamp_idx)
+                self.redis.set(exact_key, payload_json, ex=self.config.cache_ttl)
 
-            # Keep only recent N entries per tenant to avoid memory bloat
-            indices = indices[-self.config.max_cache_entries_per_tenant :]
-            self.redis.set(vectors_list_key, json.dumps(indices), ex=self.config.cache_ttl)
+                # Tier 2: Vector similarity entry (indexed by tenant + timestamp-based index)
+                timestamp_idx = int(time.time() * 1000000) % 1000000
+                vector_key = self._cache_key_vector(request.tenant_id, timestamp_idx)
+                self.redis.set(vector_key, payload_json, ex=self.config.cache_ttl)
 
-            return True
+                # Track vector indices for this tenant
+                vectors_list_key = self._cache_key_vectors_list(request.tenant_id)
+                existing = self.redis.get(vectors_list_key)
+                indices = json.loads(existing) if existing else []
+                indices.append(timestamp_idx)
 
-        except Exception:
-            # Fail silent: cache write failure doesn't affect response
-            return False
+                # Keep only recent N entries per tenant to avoid memory bloat
+                indices = indices[-self.config.max_cache_entries_per_tenant :]
+                self.redis.set(vectors_list_key, json.dumps(indices), ex=self.config.cache_ttl)
+
+                latency_ms = (time.time() - start_time) * 1000
+                span.set_attribute("size_bytes", size_bytes)
+                span.set_attribute("ttl_seconds", self.config.cache_ttl)
+                span.set_attribute("latency_ms", round(latency_ms, 2))
+
+                return True
+
+            except Exception as e:
+                span.record_exception(e)
+                # Fail silent: cache write failure doesn't affect response
+                return False
 
     @staticmethod
     def _cosine_distance(a: list[float], b: list[float]) -> float:
