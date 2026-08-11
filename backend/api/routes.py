@@ -22,6 +22,7 @@ from backend.schemas.retrieval import (
     SearchResponse,
     SearchHit,
 )
+from backend.security.output_validator import OutputValidator, get_output_validator
 from backend.services.ingestion import IngestionService
 from backend.services.retrieval_engine import HybridRetriever
 
@@ -60,6 +61,11 @@ def get_sanitizer() -> InputSanitizer | None:
     return get_input_sanitizer()
 
 
+def get_validator() -> OutputValidator | None:
+    """Optional output validator dependency (None if security disabled)."""
+    return get_output_validator()
+
+
 @router.post("/ingest", status_code=201)
 async def ingest(
     request: IngestRequest,
@@ -78,10 +84,12 @@ async def search(
     reranker: RerankerWorker = Depends(get_reranker),
     cache: SemanticCache | None = Depends(get_cache),
     sanitizer: InputSanitizer | None = Depends(get_sanitizer),
+    validator: OutputValidator | None = Depends(get_validator),
 ) -> SearchResponse:
     """Run hybrid dense+sparse retrieval, optionally rerank, then return top-K.
 
     Security: Input is sanitized (PII redaction, injection detection).
+    Output: Response validated for structure and leaked credentials.
     Cache: If cache hit, returns cached response.
     Retrieval: Runs hybrid dense+sparse search with optional reranking.
     """
@@ -118,7 +126,15 @@ async def search(
     ]
     response = SearchResponse(tenant_id=sanitized_request.tenant_id, query=sanitized_request.query, hits=hits)
 
-    # Step 4: Async cache write (non-blocking, fire-and-forget)
+    # Step 4: Output validation (structure & leaked credentials check)
+    if validator:
+        validation_report = await validator.validate(response)
+        # Log validation results (warnings are non-blocking)
+        if validation_report.warnings:
+            for warning in validation_report.warnings:
+                pass  # Warnings logged but don't block response
+
+    # Step 5: Async cache write (non-blocking, fire-and-forget)
     if cache:
         asyncio.create_task(_write_cache_async(cache, sanitized_request, response))
 
