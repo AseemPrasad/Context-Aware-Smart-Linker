@@ -11,6 +11,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends
 
+from backend.cache.semantic_cache import get_semantic_cache, SemanticCache
 from backend.db.vector_store import VectorStore
 from backend.models.reranker import RerankerWorker
 from backend.schemas.retrieval import (
@@ -48,6 +49,11 @@ def get_reranker() -> RerankerWorker:
     return _reranker
 
 
+def get_cache() -> SemanticCache | None:
+    """Optional semantic cache dependency (None if Redis disabled)."""
+    return get_semantic_cache()
+
+
 @router.post("/ingest", status_code=201)
 async def ingest(
     request: IngestRequest,
@@ -64,8 +70,20 @@ async def search(
     request: SearchRequest,
     retriever: HybridRetriever = Depends(get_retriever),
     reranker: RerankerWorker = Depends(get_reranker),
+    cache: SemanticCache | None = Depends(get_cache),
 ) -> SearchResponse:
-    """Run hybrid dense+sparse retrieval, optionally rerank, then return top-K."""
+    """Run hybrid dense+sparse retrieval, optionally rerank, then return top-K.
+
+    Cache lookup is transparent: if cache hit, returns cached response.
+    If cache miss, retrieves normally. Cache write is async and non-blocking.
+    """
+    # Tier 1 + Tier 2 cache lookup
+    if cache:
+        cached_response = cache.get(request)
+        if cached_response:
+            return cached_response
+
+    # Cache miss: execute retrieval
     candidates = await retriever.retrieve(request, top_k=request.top_k)
     if request.use_rerank and candidates:
         candidates = await reranker.rerank(request.query, candidates)
@@ -78,7 +96,24 @@ async def search(
         )
         for c in candidates
     ]
-    return SearchResponse(tenant_id=request.tenant_id, query=request.query, hits=hits)
+    response = SearchResponse(tenant_id=request.tenant_id, query=request.query, hits=hits)
+
+    # Async cache write (non-blocking, fire-and-forget)
+    if cache:
+        import asyncio
+        asyncio.create_task(_write_cache_async(cache, request, response))
+
+    return response
+
+
+async def _write_cache_async(
+    cache: SemanticCache,
+    request: SearchRequest,
+    response: SearchResponse,
+) -> None:
+    """Async task for writing cache (runs in background, never awaited)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, cache.set, request, response)
 
 
 @router.post("/rerank")
