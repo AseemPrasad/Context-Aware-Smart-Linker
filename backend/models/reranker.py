@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+import time
 from typing import Any
 
 from backend.services.retrieval_engine import Candidate
+from backend.observability.tracer import get_tracer
 
 
 class RerankerWorker:
@@ -67,16 +69,27 @@ class RerankerWorker:
         if not candidates:
             return candidates
 
-        self._start()
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-        passages = [c.passage for c in candidates]
+        tracer = get_tracer()
+        start_time = time.time()
 
-        # Bounded queue ensures we never run concurrent model instances.
-        self._request_queue.put((query, passages, future))
-        scores = await asyncio.wrap_future(future)
+        with tracer.start_as_current_span("reranking") as span:
+            self._start()
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future = loop.create_future()
+            passages = [c.passage for c in candidates]
 
-        for cand, score in zip(candidates, scores):
-            cand.rrf_score = float(score)
+            # Bounded queue ensures we never run concurrent model instances.
+            self._request_queue.put((query, passages, future))
+            scores = await asyncio.wrap_future(future)
 
-        return sorted(candidates, key=lambda c: c.rrf_score, reverse=True)
+            for cand, score in zip(candidates, scores):
+                cand.rrf_score = float(score)
+
+            ranked = sorted(candidates, key=lambda c: c.rrf_score, reverse=True)
+            latency_ms = (time.time() - start_time) * 1000
+
+            span.set_attribute("num_candidates_in", len(candidates))
+            span.set_attribute("model", self.model_name)
+            span.set_attribute("latency_ms", round(latency_ms, 2))
+
+            return ranked

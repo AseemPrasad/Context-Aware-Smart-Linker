@@ -10,10 +10,12 @@ This module is fully additive and does not touch any extension code.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 
 from backend.db.vector_store import VectorStore
 from backend.schemas.retrieval import SearchRequest
+from backend.observability.tracer import get_tracer
 
 RRF_K = 60  # Standard RRF constant.
 
@@ -56,39 +58,63 @@ class HybridRetriever:
 
     async def retrieve(self, request: SearchRequest, top_k: int = 50) -> list[Candidate]:
         """Run dense + sparse search in parallel and fuse via RRF."""
-        dense_fut = asyncio.to_thread(self._dense_rank, request, top_k)
-        sparse_fut = asyncio.to_thread(self._sparse_rank, request, top_k)
-        dense_hits, sparse_hits = await asyncio.gather(dense_fut, sparse_fut)
+        tracer = get_tracer()
+        start_time = time.time()
 
-        candidates: dict[str, Candidate] = {}
+        with tracer.start_as_current_span("retrieval.hybrid") as root_span:
+            # Dense search
+            dense_start = time.time()
+            with tracer.start_as_current_span("retrieval.dense") as dense_span:
+                dense_fut = asyncio.to_thread(self._dense_rank, request, top_k)
+                dense_hits = await dense_fut
+                dense_time = (time.time() - dense_start) * 1000
+                dense_span.set_attribute("latency_ms", round(dense_time, 2))
+                dense_span.set_attribute("num_results", len(dense_hits))
 
-        # Dense list: each index is a tenant-dense entry.
-        for rank, idx in enumerate(dense_hits, start=1):
-            item = self.store.dense_item(request.tenant_id, idx)
-            key = item["document_id"]
-            cand = candidates.setdefault(
-                key,
-                Candidate(
-                    document_id=item["document_id"],
-                    passage=item.get("metadata", {}).get("passage", ""),
-                ),
-            )
-            cand.ranks.append(rank)
-            cand.rrf_score += 1.0 / (RRF_K + rank)
+            # Sparse search
+            sparse_start = time.time()
+            with tracer.start_as_current_span("retrieval.sparse") as sparse_span:
+                sparse_fut = asyncio.to_thread(self._sparse_rank, request, top_k)
+                sparse_hits = await sparse_fut
+                sparse_time = (time.time() - sparse_start) * 1000
+                sparse_span.set_attribute("latency_ms", round(sparse_time, 2))
+                sparse_span.set_attribute("num_results", len(sparse_hits))
 
-        # Sparse hits: (score, passage_global_index).
-        for rank, (_, idx) in enumerate(sparse_hits, start=1):
-            passage = self.store._bm25.passage_at(request.tenant_id, idx)
-            doc_id = self.store._doc_ids.get(request.tenant_id, [""])[idx]
-            key = f"{doc_id}::{idx}"
-            cand = candidates.setdefault(
-                key,
-                Candidate(document_id=doc_id, passage=passage),
-            )
-            cand.ranks.append(rank)
-            cand.rrf_score += 1.0 / (RRF_K + rank)
+            candidates: dict[str, Candidate] = {}
 
-        ordered = sorted(
-            candidates.values(), key=lambda c: c.rrf_score, reverse=True
-        )[:top_k]
-        return ordered
+            # Dense list: each index is a tenant-dense entry.
+            for rank, idx in enumerate(dense_hits, start=1):
+                item = self.store.dense_item(request.tenant_id, idx)
+                key = item["document_id"]
+                cand = candidates.setdefault(
+                    key,
+                    Candidate(
+                        document_id=item["document_id"],
+                        passage=item.get("metadata", {}).get("passage", ""),
+                    ),
+                )
+                cand.ranks.append(rank)
+                cand.rrf_score += 1.0 / (RRF_K + rank)
+
+            # Sparse hits: (score, passage_global_index).
+            for rank, (_, idx) in enumerate(sparse_hits, start=1):
+                passage = self.store._bm25.passage_at(request.tenant_id, idx)
+                doc_id = self.store._doc_ids.get(request.tenant_id, [""])[idx]
+                key = f"{doc_id}::{idx}"
+                cand = candidates.setdefault(
+                    key,
+                    Candidate(document_id=doc_id, passage=passage),
+                )
+                cand.ranks.append(rank)
+                cand.rrf_score += 1.0 / (RRF_K + rank)
+
+            ordered = sorted(
+                candidates.values(), key=lambda c: c.rrf_score, reverse=True
+            )[:top_k]
+
+            total_time = (time.time() - start_time) * 1000
+            root_span.set_attribute("num_candidates", len(ordered))
+            root_span.set_attribute("top_k", top_k)
+            root_span.set_attribute("latency_ms", round(total_time, 2))
+
+            return ordered
