@@ -9,6 +9,7 @@ independently.
 from fastapi import FastAPI
 
 from backend.api.routes import router
+from backend.cache.monitor import get_cache_monitor
 
 app = FastAPI(
     title="CASL Backend",
@@ -23,3 +24,10 @@ app.include_router(router)
 async def health() -> dict:
     """Simple health check for the API gateway."""
     return {"status": "ok"}
+
+
+@app.get("/cache/stats")
+async def cache_stats() -> dict:
+    """Get cache performance statistics and health status."""
+    monitor = get_cache_monitor()
+    return monitor.get_stats().to_dict()
