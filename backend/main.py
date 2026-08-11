@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from backend.api.routes import router
 from backend.cache.monitor import get_cache_monitor
+from backend.gateway.endpoint import router as gateway_router
 from backend.security.monitor import get_security_monitor
 
 app = FastAPI(
@@ -19,6 +20,7 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.include_router(gateway_router)
 
 
 @app.get("/health")
