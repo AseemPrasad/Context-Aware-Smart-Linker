@@ -6,6 +6,7 @@ minimal and additive so the existing browser extension continues to work
 independently.
 """
 
+import os
 from fastapi import FastAPI
 
 from backend.api.routes import router
@@ -14,6 +15,7 @@ from backend.cache.monitor import get_cache_monitor
 from backend.gateway.endpoint import router as gateway_router
 from backend.middleware.telemetry import TelemetryMiddleware
 from backend.observability.tracer import setup_telemetry
+from backend.security.middleware import AuthMiddleware, RateLimitMiddleware
 from backend.security.monitor import get_security_monitor
 from backend.tasks.endpoints import router as tasks_router
 from backend.tasks.monitoring import router as monitoring_router
@@ -26,6 +28,11 @@ app = FastAPI(
     description="Multi-tenant hybrid RAG retrieval engine.",
     version="0.1.0",
 )
+
+# Add authentication middleware (optional)
+if os.getenv("AUTH_ENABLED", "false").lower() == "true":
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(RateLimitMiddleware)
 
 # Add telemetry middleware for HTTP request tracing
 app.add_middleware(TelemetryMiddleware)
@@ -98,3 +105,42 @@ async def agents_metrics() -> dict:
         }
     except ImportError:
         return {"error": "Agent module not available", "enabled": False}
+
+
+@app.post("/auth/token")
+async def issue_token(tenant_id: str, user_id: str = None, user_role: str = "viewer") -> dict:
+    """Issue JWT authentication token."""
+    from backend.security.token_manager import get_token_manager
+
+    manager = get_token_manager()
+    token = manager.issue_token(tenant_id, user_id, user_role)
+
+    return {"token": token, "type": "bearer"}
+
+
+@app.post("/auth/token/refresh")
+async def refresh_token(token: str) -> dict:
+    """Refresh JWT token."""
+    from backend.security.token_manager import get_token_manager
+
+    manager = get_token_manager()
+    new_token = manager.refresh_token(token)
+
+    if not new_token:
+        return {"error": "Invalid token"}, 401
+
+    return {"token": new_token, "type": "bearer"}
+
+
+@app.get("/security/status")
+async def security_status() -> dict:
+    """Get security system status."""
+    from backend.security.auth import JWTConfig
+    from backend.security.rate_limiter import RateLimitConfig
+    from backend.security.rbac import RBACConfig
+
+    return {
+        "auth_enabled": JWTConfig().enabled,
+        "rate_limit_enabled": RateLimitConfig().enabled,
+        "rbac_enabled": RBACConfig().enabled,
+    }
