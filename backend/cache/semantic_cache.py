@@ -16,6 +16,7 @@ from typing import Any
 
 from backend.cache.redis_client import get_redis_client
 from backend.core.config import get_cache_config
+from backend.core.encoder import get_encoder
 from backend.schemas.retrieval import SearchRequest, SearchResponse
 
 
@@ -25,16 +26,12 @@ class SemanticCache:
     def __init__(self) -> None:
         self.redis = get_redis_client()
         self.config = get_cache_config()
-        self._encoder = None
         self._hit_count = 0
         self._miss_count = 0
 
-    def _load_encoder(self) -> Any:
-        """Lazy-load sentence-transformer encoder (reuse from retriever)."""
-        if self._encoder is None:
-            from sentence_transformers import SentenceTransformer
-            self._encoder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-        return self._encoder
+    def _get_encoder(self) -> Any:
+        """Get the shared encoder singleton."""
+        return get_encoder().get_encoder()
 
     def _compute_hash(self, request: SearchRequest) -> str:
         """Compute MD5 hash of request payload for exact matching."""
@@ -85,7 +82,7 @@ class SemanticCache:
     def _semantic_match(self, request: SearchRequest) -> SearchResponse | None:
         """Find semantically similar cached query within threshold."""
         try:
-            encoder = self._load_encoder()
+            encoder = self._get_encoder()
             query_vec = encoder.encode([request.query])[0]
             query_vec = [float(x) for x in query_vec]
 
@@ -133,7 +130,7 @@ class SemanticCache:
             return False
 
         try:
-            encoder = self._load_encoder()
+            encoder = self._get_encoder()
             query_vec = encoder.encode([request.query])[0]
             query_vec = [float(x) for x in query_vec]
 
