@@ -12,6 +12,7 @@ from typing import Any
 
 from backend.security.injection_detector import InjectionDetectionReport
 from backend.security.pii_anonymizer import PiiRedactionReport
+from backend.observability.tracer import get_tracer
 
 
 @dataclass
@@ -103,6 +104,9 @@ class SecurityMonitor:
         if not report or report.total_pii_found == 0:
             return
 
+        tracer = get_tracer()
+        tracer.start_as_current_span("security.pii_redaction").__enter__()
+
         self._stats.total_pii_redacted += report.total_pii_found
         self._stats.last_pii_redaction_time = datetime.utcnow()
 
@@ -118,45 +122,73 @@ class SecurityMonitor:
             elif redaction.pii_type == "ssn":
                 self._stats.ssns_redacted += 1
 
+        with tracer.start_as_current_span("security.pii_detected") as span:
+            span.set_attribute("total_pii_found", report.total_pii_found)
+            span.set_attribute("emails", self._stats.emails_redacted)
+            span.set_attribute("phones", self._stats.phones_redacted)
+            span.set_attribute("api_keys", self._stats.api_keys_redacted)
+
     def record_injection_detection(self, report: InjectionDetectionReport) -> None:
         """Record injection detection results."""
         if not report or report.total_matches == 0:
             return
 
-        self._stats.total_injections_detected += report.total_matches
-        self._stats.last_injection_detection_time = datetime.utcnow()
+        tracer = get_tracer()
 
-        for pattern in report.patterns_found:
-            if pattern.pattern_type == "override":
-                self._stats.override_patterns_detected += 1
-            elif pattern.pattern_type == "escape":
-                self._stats.escape_patterns_detected += 1
-            elif pattern.pattern_type == "jailbreak":
-                self._stats.jailbreak_patterns_detected += 1
+        with tracer.start_as_current_span("security.injection_detected") as span:
+            self._stats.total_injections_detected += report.total_matches
+            self._stats.last_injection_detection_time = datetime.utcnow()
+
+            for pattern in report.patterns_found:
+                if pattern.pattern_type == "override":
+                    self._stats.override_patterns_detected += 1
+                elif pattern.pattern_type == "escape":
+                    self._stats.escape_patterns_detected += 1
+                elif pattern.pattern_type == "jailbreak":
+                    self._stats.jailbreak_patterns_detected += 1
+
+            span.set_attribute("total_injections", report.total_matches)
+            span.set_attribute("override_patterns", self._stats.override_patterns_detected)
+            span.set_attribute("escape_patterns", self._stats.escape_patterns_detected)
+            span.set_attribute("jailbreak_patterns", self._stats.jailbreak_patterns_detected)
 
     def record_injection_block(self) -> None:
         """Record when a request is blocked due to injection."""
-        self._stats.total_requests_blocked += 1
-        self._stats.blocked_by_injection += 1
-        self._stats.last_block_time = datetime.utcnow()
+        tracer = get_tracer()
+
+        with tracer.start_as_current_span("security.injection_blocked") as span:
+            self._stats.total_requests_blocked += 1
+            self._stats.blocked_by_injection += 1
+            self._stats.last_block_time = datetime.utcnow()
+            span.set_attribute("total_blocked", self._stats.total_requests_blocked)
 
     def record_size_block(self) -> None:
         """Record when a request is blocked due to size."""
-        self._stats.total_requests_blocked += 1
-        self._stats.blocked_by_size += 1
-        self._stats.last_block_time = datetime.utcnow()
+        tracer = get_tracer()
+
+        with tracer.start_as_current_span("security.size_blocked") as span:
+            self._stats.total_requests_blocked += 1
+            self._stats.blocked_by_size += 1
+            self._stats.last_block_time = datetime.utcnow()
+            span.set_attribute("total_blocked", self._stats.total_requests_blocked)
 
     def record_output_violation(self, violation_type: str) -> None:
         """Record an output validation violation."""
-        self._stats.total_violations_detected += 1
-        self._stats.last_violation_time = datetime.utcnow()
+        tracer = get_tracer()
 
-        if violation_type == "structure":
-            self._stats.structure_violations += 1
-        elif violation_type == "format_error":
-            self._stats.format_violations += 1
-        elif violation_type == "leaked_secret":
-            self._stats.leaked_secrets_detected += 1
+        with tracer.start_as_current_span("security.output_violation") as span:
+            self._stats.total_violations_detected += 1
+            self._stats.last_violation_time = datetime.utcnow()
+
+            if violation_type == "structure":
+                self._stats.structure_violations += 1
+            elif violation_type == "format_error":
+                self._stats.format_violations += 1
+            elif violation_type == "leaked_secret":
+                self._stats.leaked_secrets_detected += 1
+
+            span.set_attribute("violation_type", violation_type)
+            span.set_attribute("total_violations", self._stats.total_violations_detected)
 
     def get_stats(self) -> SecurityStats:
         """Get current security statistics."""
