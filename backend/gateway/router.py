@@ -5,12 +5,15 @@ Routes requests to appropriate providers based on complexity, availability, and 
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from backend.gateway.base import LLMProvider, ProviderResponse
 from backend.gateway.circuit_breaker import get_circuit_breaker
 from backend.gateway.complexity import get_complexity_analyzer, get_cost_calculator
+from backend.observability.tracer import get_tracer
+from backend.observability.metrics import get_token_budget_manager
 
 
 @dataclass
@@ -100,80 +103,118 @@ class ModelGateway:
         Returns:
             (ProviderResponse, RoutingDecision) - response may be None if all fail
         """
-        # Analyze complexity
-        analysis = self.complexity_analyzer.analyze(query, context, num_hits, use_rerank)
+        tracer = get_tracer()
+        budget_manager = get_token_budget_manager()
+        start_time = time.time()
 
-        # Check budget
-        remaining = self.cost_calculator.get_remaining_budget()
-        if remaining <= 0:
+        with tracer.start_as_current_span("llm.generation") as root_span:
+            # Analyze complexity
+            analysis = self.complexity_analyzer.analyze(query, context, num_hits, use_rerank)
+
+            # Check budget
+            remaining = self.cost_calculator.get_remaining_budget()
+            if remaining <= 0:
+                root_span.set_attribute("error", True)
+                root_span.set_attribute("error_reason", "budget_exceeded")
+                return None, RoutingDecision(
+                    selected_provider=None,
+                    fallback_providers=[],
+                    complexity_level=analysis.level.value,
+                    reason="Budget exceeded",
+                    tried_providers=[],
+                    final_error="Monthly budget exhausted",
+                )
+
+            # Get providers in priority order
+            tried_providers: list[str] = []
+            error_messages: list[str] = []
+
+            for provider_name in self.provider_priority:
+                if provider_name not in self.providers:
+                    continue
+
+                provider = self.providers[provider_name]
+                tried_providers.append(provider_name)
+
+                # Check circuit breaker
+                breaker = get_circuit_breaker(provider_name)
+                is_available, circuit_reason = breaker.is_available()
+
+                with tracer.start_as_current_span("circuit_breaker") as cb_span:
+                    cb_span.set_attribute("provider", provider_name)
+                    cb_span.set_attribute("state", breaker.state.value)
+                    cb_span.set_attribute("available", is_available)
+
+                    if not is_available:
+                        error_messages.append(f"{provider_name}: {circuit_reason}")
+                        continue
+
+                # Try provider
+                try:
+                    provider_start = time.time()
+                    response = await provider.generate(
+                        prompt=query,
+                        context=context,
+                        model_name=analysis.recommended_model,
+                        max_tokens=min(2000, analysis.estimated_tokens * 2),
+                    )
+
+                    provider_latency_ms = (time.time() - provider_start) * 1000
+
+                    # Record success
+                    breaker.record_success()
+                    self.cost_calculator.add_spend(provider_name, response.cost_usd)
+
+                    # Record token usage
+                    if hasattr(response, 'input_tokens') and hasattr(response, 'output_tokens'):
+                        budget_manager.record_tokens(
+                            tenant_id="default",
+                            model=analysis.recommended_model,
+                            input_tokens=response.input_tokens,
+                            output_tokens=response.output_tokens,
+                            route="gateway"
+                        )
+
+                    root_span.set_attribute("provider", provider_name)
+                    root_span.set_attribute("model", analysis.recommended_model)
+                    root_span.set_attribute("complexity", analysis.level.value)
+                    root_span.set_attribute("provider_latency_ms", round(provider_latency_ms, 2))
+                    root_span.set_attribute("success", True)
+
+                    return response, RoutingDecision(
+                        selected_provider=provider,
+                        fallback_providers=[self.providers[p] for p in self.provider_priority if p != provider_name and p in self.providers],
+                        complexity_level=analysis.level.value,
+                        reason=f"Routed to {provider_name} (complexity: {analysis.level.value})",
+                        tried_providers=tried_providers,
+                    )
+
+                except Exception as e:
+                    error_msg = f"{provider_name}: {str(e)}"
+                    error_messages.append(error_msg)
+
+                    # Record failure
+                    breaker.record_failure("provider_error")
+                    root_span.add_event(f"provider_failed: {provider_name}", {"error": str(e)})
+
+            # All providers failed
+            fallback_providers = []
+            final_error = "\n".join(error_messages) if error_messages else "All providers unavailable"
+            total_time = (time.time() - start_time) * 1000
+
+            root_span.set_attribute("error", True)
+            root_span.set_attribute("error_reason", "all_providers_failed")
+            root_span.set_attribute("latency_ms", round(total_time, 2))
+            root_span.set_attribute("tried_providers_count", len(tried_providers))
+
             return None, RoutingDecision(
                 selected_provider=None,
-                fallback_providers=[],
+                fallback_providers=fallback_providers,
                 complexity_level=analysis.level.value,
-                reason="Budget exceeded",
-                tried_providers=[],
-                final_error="Monthly budget exhausted",
+                reason="No provider available",
+                tried_providers=tried_providers,
+                final_error=final_error,
             )
-
-        # Get providers in priority order
-        tried_providers: list[str] = []
-        error_messages: list[str] = []
-
-        for provider_name in self.provider_priority:
-            if provider_name not in self.providers:
-                continue
-
-            provider = self.providers[provider_name]
-            tried_providers.append(provider_name)
-
-            # Check circuit breaker
-            breaker = get_circuit_breaker(provider_name)
-            is_available, circuit_reason = breaker.is_available()
-
-            if not is_available:
-                error_messages.append(f"{provider_name}: {circuit_reason}")
-                continue
-
-            # Try provider
-            try:
-                response = await provider.generate(
-                    prompt=query,
-                    context=context,
-                    model_name=analysis.recommended_model,
-                    max_tokens=min(2000, analysis.estimated_tokens * 2),
-                )
-
-                # Record success
-                breaker.record_success()
-                self.cost_calculator.add_spend(provider_name, response.cost_usd)
-
-                return response, RoutingDecision(
-                    selected_provider=provider,
-                    fallback_providers=[self.providers[p] for p in self.provider_priority if p != provider_name and p in self.providers],
-                    complexity_level=analysis.level.value,
-                    reason=f"Routed to {provider_name} (complexity: {analysis.level.value})",
-                    tried_providers=tried_providers,
-                )
-
-            except Exception as e:
-                error_msg = f"{provider_name}: {str(e)}"
-                error_messages.append(error_msg)
-
-                # Record failure
-                breaker.record_failure("provider_error")
-
-        # All providers failed
-        fallback_providers = []
-        final_error = "\n".join(error_messages) if error_messages else "All providers unavailable"
-
-        return None, RoutingDecision(
-            selected_provider=None,
-            fallback_providers=fallback_providers,
-            complexity_level=analysis.level.value,
-            reason="No provider available",
-            tried_providers=tried_providers,
-            final_error=final_error,
-        )
 
     async def health_check_all(self) -> dict[str, Any]:
         """Check health of all providers."""
