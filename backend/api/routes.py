@@ -169,5 +169,32 @@ async def rerank(
     return {"scores": [round(c.rrf_score, 4) for c in ranked],
             "passages": [c.passage for c in ranked]}
 
+
+@router.post("/stream")
+async def stream(
+    request: SearchRequest,
+) -> dict:
+    """SSE streaming endpoint for real-time token delivery."""
+    from backend.api.stream_config import get_stream_config
+    from backend.api.stream_generator import stream_extraction
+    from fastapi.responses import StreamingResponse
+
+    config = get_stream_config()
+    if not config.stream_enabled:
+        return {"error": "Streaming not enabled"}
+
+    async def event_generator():
+        async for event in stream_extraction(request.query, request.query):
+            yield event.to_sse_format()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 # Re-export for uvicorn convenience.
 app = router

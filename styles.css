@@ -20,3 +20,35 @@
   line-height: 1.4;
   z-index: 999999;
 }
+
+/* Streaming UI animations */
+.casl-stream-skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.1) 25%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.1) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.casl-stream-progress {
+  height: 2px;
+  background: linear-gradient(90deg, #4CAF50, #2196F3);
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
+.casl-token-fade-in {
+  animation: token-fade-in 0.2s ease-in;
+}
+
+@keyframes token-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.casl-stream-active {
+  border-left: 3px solid #4CAF50;
+}
