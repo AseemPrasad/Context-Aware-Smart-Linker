@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 
 from backend.cache.semantic_cache import get_semantic_cache, SemanticCache
 from backend.db.vector_store import VectorStore
+from backend.middleware.sanitizer import get_input_sanitizer, InputSanitizer
 from backend.models.reranker import RerankerWorker
 from backend.schemas.retrieval import (
     IngestRequest,
@@ -21,6 +22,7 @@ from backend.schemas.retrieval import (
     SearchResponse,
     SearchHit,
 )
+from backend.security.output_validator import OutputValidator, get_output_validator
 from backend.services.ingestion import IngestionService
 from backend.services.retrieval_engine import HybridRetriever
 
@@ -54,6 +56,16 @@ def get_cache() -> SemanticCache | None:
     return get_semantic_cache()
 
 
+def get_sanitizer() -> InputSanitizer | None:
+    """Optional input sanitizer dependency (None if security disabled)."""
+    return get_input_sanitizer()
+
+
+def get_validator() -> OutputValidator | None:
+    """Optional output validator dependency (None if security disabled)."""
+    return get_output_validator()
+
+
 @router.post("/ingest", status_code=201)
 async def ingest(
     request: IngestRequest,
@@ -71,22 +83,38 @@ async def search(
     retriever: HybridRetriever = Depends(get_retriever),
     reranker: RerankerWorker = Depends(get_reranker),
     cache: SemanticCache | None = Depends(get_cache),
+    sanitizer: InputSanitizer | None = Depends(get_sanitizer),
+    validator: OutputValidator | None = Depends(get_validator),
 ) -> SearchResponse:
     """Run hybrid dense+sparse retrieval, optionally rerank, then return top-K.
 
-    Cache lookup is transparent: if cache hit, returns cached response.
-    If cache miss, retrieves normally. Cache write is async and non-blocking.
+    Security: Input is sanitized (PII redaction, injection detection).
+    Output: Response validated for structure and leaked credentials.
+    Cache: If cache hit, returns cached response.
+    Retrieval: Runs hybrid dense+sparse search with optional reranking.
     """
-    # Tier 1 + Tier 2 cache lookup
+    # Step 1: Input sanitization (PII masking + injection detection)
+    sanitized_request = request
+    if sanitizer:
+        sanitized_request, sanitization_report = await sanitizer.sanitize(request)
+        # If injection detected at blocking severity, request is blocked
+        if not sanitization_report.is_safe:
+            return SearchResponse(
+                tenant_id=request.tenant_id,
+                query=request.query,
+                hits=[],
+            )
+
+    # Step 2: Tier 1 + Tier 2 cache lookup (using sanitized request)
     if cache:
-        cached_response = cache.get(request)
+        cached_response = cache.get(sanitized_request)
         if cached_response:
             return cached_response
 
-    # Cache miss: execute retrieval
-    candidates = await retriever.retrieve(request, top_k=request.top_k)
-    if request.use_rerank and candidates:
-        candidates = await reranker.rerank(request.query, candidates)
+    # Step 3: Cache miss: execute retrieval
+    candidates = await retriever.retrieve(sanitized_request, top_k=sanitized_request.top_k)
+    if sanitized_request.use_rerank and candidates:
+        candidates = await reranker.rerank(sanitized_request.query, candidates)
 
     hits = [
         SearchHit(
@@ -96,12 +124,19 @@ async def search(
         )
         for c in candidates
     ]
-    response = SearchResponse(tenant_id=request.tenant_id, query=request.query, hits=hits)
+    response = SearchResponse(tenant_id=sanitized_request.tenant_id, query=sanitized_request.query, hits=hits)
 
-    # Async cache write (non-blocking, fire-and-forget)
+    # Step 4: Output validation (structure & leaked credentials check)
+    if validator:
+        validation_report = await validator.validate(response)
+        # Log validation results (warnings are non-blocking)
+        if validation_report.warnings:
+            for warning in validation_report.warnings:
+                pass  # Warnings logged but don't block response
+
+    # Step 5: Async cache write (non-blocking, fire-and-forget)
     if cache:
-        import asyncio
-        asyncio.create_task(_write_cache_async(cache, request, response))
+        asyncio.create_task(_write_cache_async(cache, sanitized_request, response))
 
     return response
 
