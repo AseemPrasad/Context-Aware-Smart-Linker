@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from backend.api.routes import router
 from backend.cache.monitor import get_cache_monitor
+from backend.security.monitor import get_security_monitor
 
 app = FastAPI(
     title="CASL Backend",
@@ -30,4 +31,11 @@ async def health() -> dict:
 async def cache_stats() -> dict:
     """Get cache performance statistics and health status."""
     monitor = get_cache_monitor()
+    return monitor.get_stats().to_dict()
+
+
+@app.get("/security/stats")
+async def security_stats() -> dict:
+    """Get security guardrails statistics and health status."""
+    monitor = get_security_monitor()
     return monitor.get_stats().to_dict()
