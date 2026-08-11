@@ -12,15 +12,23 @@ from backend.api.routes import router
 from backend.api.stream_endpoints import router as stream_router
 from backend.cache.monitor import get_cache_monitor
 from backend.gateway.endpoint import router as gateway_router
+from backend.middleware.telemetry import TelemetryMiddleware
+from backend.observability.tracer import setup_telemetry
 from backend.security.monitor import get_security_monitor
 from backend.tasks.endpoints import router as tasks_router
 from backend.tasks.monitoring import router as monitoring_router
+
+# Initialize OpenTelemetry tracing
+setup_telemetry()
 
 app = FastAPI(
     title="CASL Backend",
     description="Multi-tenant hybrid RAG retrieval engine.",
     version="0.1.0",
 )
+
+# Add telemetry middleware for HTTP request tracing
+app.add_middleware(TelemetryMiddleware)
 
 app.include_router(router)
 app.include_router(gateway_router)
@@ -47,3 +55,12 @@ async def security_stats() -> dict:
     """Get security guardrails statistics and health status."""
     monitor = get_security_monitor()
     return monitor.get_stats().to_dict()
+
+
+@app.get("/telemetry/metrics")
+async def telemetry_metrics() -> dict:
+    """Get OpenTelemetry metrics (Prometheus format exported as JSON)."""
+    from backend.observability.metrics import get_token_budget_manager
+
+    budget_manager = get_token_budget_manager()
+    return budget_manager.get_metrics()
