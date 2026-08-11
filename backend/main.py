@@ -76,3 +76,25 @@ async def evals_metrics() -> dict:
         return harness.get_latest_metrics()
     except ImportError:
         return {"error": "Evaluation module not available", "enabled": False}
+
+
+@app.get("/agents/metrics")
+async def agents_metrics() -> dict:
+    """Get agent execution metrics and health status."""
+    try:
+        from backend.agents.safety import get_monitor
+        from backend.agents.config import get_config
+
+        config = get_config()
+        monitor = get_monitor()
+
+        is_healthy, status_msg = monitor.check_health()
+
+        return {
+            "enabled": config.enabled,
+            "healthy": is_healthy,
+            "status": status_msg,
+            "metrics": monitor.get_stats(),
+        }
+    except ImportError:
+        return {"error": "Agent module not available", "enabled": False}
