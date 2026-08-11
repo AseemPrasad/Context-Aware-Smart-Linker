@@ -12,6 +12,8 @@ from backend.api.routes import router
 from backend.cache.monitor import get_cache_monitor
 from backend.gateway.endpoint import router as gateway_router
 from backend.security.monitor import get_security_monitor
+from backend.tasks.endpoints import router as tasks_router
+from backend.tasks.monitoring import router as monitoring_router
 
 app = FastAPI(
     title="CASL Backend",
@@ -21,6 +23,8 @@ app = FastAPI(
 
 app.include_router(router)
 app.include_router(gateway_router)
+app.include_router(tasks_router)
+app.include_router(monitoring_router)
 
 
 @app.get("/health")
