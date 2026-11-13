@@ -20,7 +20,7 @@
 ## 🎯 Executive Overview
 
 **CASL (Context-Aware Smart Linker)** is an institutional-grade **Enterprise B2B AI Research & Due Diligence Platform** paired with an **in-browser contextual workspace overlay (Chrome Manifest V3)**.
-
+[FORMELY : AN AI POWERED CHROME EXTENSION FOR QUICK CONTEXT AWARE EXPLANATIONS ]
 High-stakes knowledge workers — **private equity deal leads, equity research analysts, M&A associates, and corporate attorneys** — spend hundreds of hours reading dense, 150-page regulatory filings (SEC 10-K, 10-Q, 8-K, credit agreements, debt indentures, S-1s). When encountering obscure debt covenants, complex accounting adjustments (EBITDA add-backs), or statutory indemnity clauses, their workflow is violently interrupted: they must leave the document, open multiple search tabs, navigate paywalled terminals, and manually reconcile PDF pages.
 
 **CASL operates directly inside the analyst's reading surface.** When text is highlighted on any regulatory filing, PDF viewer, or financial disclosure:
