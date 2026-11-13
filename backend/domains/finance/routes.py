@@ -4,7 +4,8 @@ Exposes endpoints for financial analysis, verification, and citation retrieval.
 Completely isolated from general search endpoints.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from backend.billing.meter import UsageMeter, get_usage_meter
 from backend.domains.finance.engine import DueDiligenceEngine
 from backend.domains.finance.schemas import (
     FinancialAnalysisRequest,
@@ -24,8 +25,16 @@ def get_due_diligence_engine() -> DueDiligenceEngine:
 async def explain_financial_term(
     request: FinancialAnalysisRequest,
     engine: DueDiligenceEngine = Depends(get_due_diligence_engine),
+    meter: UsageMeter = Depends(get_usage_meter),
 ) -> FinancialAnalysisResponse:
-    """Explains a financial or legal term in context with grounded citations."""
+    """Explains a financial or legal term in context with grounded citations and credit metering."""
+    # Deduct 1 credit for standard RAG analysis
+    deduction = meter.deduct_credits(tenant_id=request.tenant_id, operation_cost=1)
+    if not deduction.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=deduction.error_message or "Monthly research credits exhausted.",
+        )
     return await engine.analyze(request)
 
 

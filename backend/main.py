@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from backend.api.routes import router
 from backend.api.stream_endpoints import router as stream_router
 from backend.domains.finance.routes import router as finance_router
+from backend.billing.routes import router as billing_router
 from backend.cache.monitor import get_cache_monitor
 from backend.gateway.endpoint import router as gateway_router
 from backend.middleware.telemetry import TelemetryMiddleware
@@ -44,6 +45,7 @@ app.include_router(tasks_router)
 app.include_router(monitoring_router)
 app.include_router(stream_router)
 app.include_router(finance_router)
+app.include_router(billing_router)
 
 
 @app.get("/health")
