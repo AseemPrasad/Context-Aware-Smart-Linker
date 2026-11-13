@@ -18,7 +18,7 @@ def create_celery_app() -> Celery | None:
         return None
 
     try:
-        app = Celery("casl_tasks")
+        app = Celery("casl_tasks", include=["backend.tasks.jobs", "backend.tasks.sec_edgar_pipeline"])
         app.config_from_object(config.get_celery_config_dict())
         return app
     except Exception as e:

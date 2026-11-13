@@ -30,11 +30,19 @@ class DueDiligenceEngine:
         self.retriever = retriever or HybridRetriever(store=self.store)
         self.reranker = reranker or RerankerWorker()
 
+    DISCLOSURE_STOP_WORDS = {
+        "ITEM", "NOTE", "RISK", "DEBT", "US", "SEC", "THE", "AND", "FOR", "PART", 
+        "PAGE", "FORM", "DATE", "CASH", "PLAN", "TERM", "YEAR", "COST", "RATE", "NET"
+    }
+
     def _extract_ticker(self, text: str, title: str) -> Optional[str]:
-        """Heuristic extractor for stock tickers (e.g., $NVDA, AAPL, NASDAQ:MSFT)."""
+        """Heuristic extractor for stock tickers while filtering common financial disclosure stop-words."""
         combined = f"{title} {text}"
-        match = re.search(r"\b([A-Z]{1,5})\b", combined)
-        return match.group(1) if match else None
+        matches = re.findall(r"\b([A-Z]{1,5})\b", combined)
+        for m in matches:
+            if m not in self.DISCLOSURE_STOP_WORDS:
+                return m
+        return None
 
     async def analyze(
         self, request: FinancialAnalysisRequest
@@ -71,22 +79,30 @@ class DueDiligenceEngine:
 
         # 4. Synthesize structured due-diligence explanation
         ticker_str = f" for {ticker}" if ticker else ""
-        exec_summary = (
-            f"'{request.term}'{ticker_str} refers to a specific metric or contractual stipulation "
-            f"concerning {request.page_title or 'the reported entity'}. "
-            f"Within the context of this disclosure, it defines obligations, risks, or performance criteria "
-            f"governed by regulatory accounting frameworks."
-        )
-
-        hist_context = (
-            f"Reconciliation with previous reporting periods indicates consistent terminology application, "
-            f"aligning with disclosures in related filings."
-        )
-
-        risk_imp = (
-            f"Material risk consideration: Deviations or covenant triggers regarding '{request.term}' "
-            f"may impact liquidity, debt compliance ratios, or statutory filings."
-        )
+        if citations:
+            exec_summary = (
+                f"'{request.term}'{ticker_str} refers to a specific metric or contractual stipulation "
+                f"concerning {request.page_title or 'the reported entity'}. "
+                f"Within the context of this disclosure, it defines obligations, risks, or performance criteria "
+                f"governed by regulatory accounting frameworks."
+            )
+            hist_context = (
+                f"Reconciliation with previous reporting periods indicates consistent terminology application, "
+                f"aligning with disclosures in related filings."
+            )
+            risk_imp = (
+                f"Material risk consideration: Deviations or covenant triggers regarding '{request.term}' "
+                f"may impact liquidity, debt compliance ratios, or statutory filings."
+            )
+            confidence = 0.96
+        else:
+            exec_summary = (
+                f"'{request.term}' appears in the active document '{request.page_title or 'Context'}', "
+                f"but no verified source filings or contracts have been indexed for this tenant yet."
+            )
+            hist_context = "No previous regulatory filings or contracts indexed for this entity yet."
+            risk_imp = "Unverified claim: Ingest the relevant 10-K or credit agreement to enable verified due diligence citations."
+            confidence = 0.40
 
         return FinancialAnalysisResponse(
             term=request.term,
@@ -94,7 +110,7 @@ class DueDiligenceEngine:
             historical_context=hist_context,
             risk_implications=risk_imp,
             citations=citations,
-            confidence_score=0.96 if citations else 0.88,
+            confidence_score=confidence,
             cached=False,
         )
 

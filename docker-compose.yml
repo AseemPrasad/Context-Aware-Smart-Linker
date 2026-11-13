@@ -15,6 +15,8 @@ services:
       - TELEMETRY_ENABLED=false
       - AUTH_ENABLED=false
       - BILLING_ENABLED=true
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
     depends_on:
       - qdrant
       - redis
@@ -49,6 +51,8 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - REDIS_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
     depends_on:
       - redis
       - qdrant
@@ -70,4 +74,5 @@ services:
 volumes:
   qdrant_storage:
   redis_data:
+  huggingface_cache:
 

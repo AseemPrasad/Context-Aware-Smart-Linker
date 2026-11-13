@@ -4,9 +4,23 @@ let tooltip = null;
 let cachedText = "";
 let cachedContext = "";
 
+// Last recorded selection bounding rect for accurate in-viewport positioning
+let lastSelectionRect = null;
+
 // Optional tenant identifier for the backend retrieval engine.
-// Current behavior is unchanged when left as the default.
+// Checks chrome.storage with fallback to 'default'.
 let cachedTenantId = "default";
+try {
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(["caslTenantId"], (result) => {
+      if (result && result.caslTenantId) {
+        cachedTenantId = result.caslTenantId;
+      }
+    });
+  }
+} catch (e) {
+  // Fail silently and use 'default'
+}
 
 console.log("✅ CASL content script loaded");
 
@@ -30,6 +44,7 @@ document.addEventListener("selectionchange", () => {
 
   if (!rect || rect.width === 0 || rect.height === 0) return;
 
+  lastSelectionRect = rect;
   showButton(rect);
 });
 
@@ -128,8 +143,15 @@ function showStructuredTooltip(data) {
     tooltip.appendChild(citationContainer);
   }
 
-  tooltip.style.top = `${window.scrollY + 120}px`;
-  tooltip.style.left = `${window.scrollX + 120}px`;
+  const topPos = lastSelectionRect
+    ? lastSelectionRect.bottom + window.scrollY + 8
+    : window.scrollY + 120;
+  const leftPos = lastSelectionRect
+    ? Math.max(10, Math.min(window.innerWidth - 340, lastSelectionRect.left + window.scrollX))
+    : window.scrollX + 120;
+
+  tooltip.style.top = `${topPos}px`;
+  tooltip.style.left = `${leftPos}px`;
 
   document.body.appendChild(tooltip);
 
@@ -143,8 +165,15 @@ function showTooltip(text) {
   tooltip.className = "casl-tooltip";
   tooltip.textContent = text;
 
-  tooltip.style.top = `${window.scrollY + 120}px`;
-  tooltip.style.left = `${window.scrollX + 120}px`;
+  const topPos = lastSelectionRect
+    ? lastSelectionRect.bottom + window.scrollY + 8
+    : window.scrollY + 120;
+  const leftPos = lastSelectionRect
+    ? Math.max(10, Math.min(window.innerWidth - 340, lastSelectionRect.left + window.scrollX))
+    : window.scrollX + 120;
+
+  tooltip.style.top = `${topPos}px`;
+  tooltip.style.left = `${leftPos}px`;
 
   document.body.appendChild(tooltip);
 

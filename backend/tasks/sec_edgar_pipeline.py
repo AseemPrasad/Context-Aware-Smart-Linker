@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import logging
 import re
+import os
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
+from backend.core.encoder import get_encoder
 from backend.db.vector_store import VectorStore
 from backend.domains.finance.parser import FinancialDocumentParser
 from backend.schemas.retrieval import IngestRequest
@@ -20,7 +22,8 @@ from backend.schemas.retrieval import IngestRequest
 logger = logging.getLogger(__name__)
 
 SEC_FEED_URL = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=10-K,10-Q,8-K&output=atom"
-SEC_USER_AGENT = "CASLResearchBot admin@casl-ai.internal"
+# SEC EDGAR requires compliant User-Agent format: SampleCompany AdminContact@<domain>.com
+SEC_USER_AGENT = os.getenv("SEC_EDGAR_USER_AGENT", "CASLResearchPlatform compliance@casl-research.com")
 
 
 class SecEdgarPipeline:
@@ -85,21 +88,24 @@ class SecEdgarPipeline:
             document_title=document_title
         )
 
+        encoder = get_encoder()
+        texts = [chunk["content"] for chunk in chunks]
+        embeddings = encoder.encode(texts)
+
         for i, chunk in enumerate(chunks):
             doc_id = f"{ticker}_{form_type}_{i}"
             meta = chunk["metadata"]
             meta["source_url"] = source_url
             meta["passage"] = chunk["content"]
 
-            # Ingest into store with synthetic zero-vector for fast sparse BM25 indexing
-            # or real embeddings when dense encoder is invoked.
             request = IngestRequest(
                 document_id=doc_id,
                 text=chunk["content"],
                 tenant_id=tenant_id,
                 metadata=meta
             )
-            self.store.ingest(request, embeddings=[[0.0] * 384])
+            emb = [embeddings[i]] if i < len(embeddings) else [[0.0] * 384]
+            self.store.ingest(request, embeddings=emb)
 
         return len(chunks)
 
