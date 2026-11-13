@@ -1,1 +1,28 @@
-{"manifest_version":3,"name":"CASL – Context Aware Smart Linker","version":"1.0","description":"Instant AI explanations for highlighted text.","permissions":["storage"],"host_permissions":["https://api.groq.com/*","https://your-backend.example.com/*"],"background":{"service_worker":"background.js"},"content_scripts":[{"matches":["<all_urls>"],"js":["content.js"],"css":["styles.css"]}]}
+{
+  "manifest_version": 3,
+  "name": "CASL – Context Aware Smart Linker",
+  "version": "1.0",
+  "description": "Instant AI explanations and verified due diligence citations for highlighted text.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://localhost:8000/*",
+    "https://api.groq.com/*",
+    "https://your-backend.example.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  }
+}

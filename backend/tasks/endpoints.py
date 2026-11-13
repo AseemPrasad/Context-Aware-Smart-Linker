@@ -153,6 +153,20 @@ async def cancel_task(task_id: str) -> dict:
         )
 
 
+@router.post("/sec/sync")
+async def trigger_sec_sync() -> dict:
+    """Manually trigger an on-demand SEC EDGAR filings sync."""
+    try:
+        from backend.tasks.sec_edgar_pipeline import sync_latest_sec_filings_task
+        result = sync_latest_sec_filings_task()
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SEC filings sync failed: {str(e)}",
+        )
+
+
 @router.get("/config")
 async def get_config() -> dict:
     """Get async processing configuration."""

@@ -15,11 +15,25 @@ This module is fully additive and does not touch any extension code.
 
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:
+    BM25Okapi = None
+
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
+except ImportError:
+    QdrantClient = None
+    PointStruct = None
+    Filter = None
+    FieldCondition = None
+    MatchValue = None
 
 from backend.schemas.retrieval import IngestRequest
 
@@ -42,8 +56,9 @@ class Bm25Index:
         self._corpora[tenant_id].extend(
             self._tokenize(meta) if (meta := p) else [] for p in passages
         )
-        # Rebuild this tenant's model (simple, correct for a demo store).
-        self._models[tenant_id] = BM25Okapi(self._corpora[tenant_id])
+        # Rebuild this tenant's model if BM25Okapi is available
+        if BM25Okapi is not None:
+            self._models[tenant_id] = BM25Okapi(self._corpora[tenant_id])
 
     def search(self, tenant_id: str, query: str, top_k: int) -> list[tuple[float, int]]:
         """Return (score, passage_global_index) pairs for a tenant."""
@@ -60,17 +75,29 @@ class Bm25Index:
         return self._passages[tenant_id][idx]
 
     def document_for_passage(self, tenant_id: str, idx: int) -> str:
-        # For simplicity, track document_id per passage in a parallel list.
-        return getattr(self, "_doc_ids", {}).get(tenant_id, [""])[idx]
+        # Per-tenant doc_ids tracking
+        doc_ids = getattr(self, "_doc_ids", {}).get(tenant_id, [])
+        if 0 <= idx < len(doc_ids):
+            return doc_ids[idx]
+        return ""
 
 
 class VectorStore:
-    """Composite dense + sparse store with tenant isolation."""
+    """Composite dense + sparse store with tenant isolation and optional persistent Qdrant backend."""
 
-    def __init__(self) -> None:
+    def __init__(self, qdrant_url: Optional[str] = None) -> None:
         self._dense: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._bm25 = Bm25Index()
         self._doc_ids: dict[str, list[str]] = defaultdict(list)
+        
+        # Optional persistent Qdrant cluster connection
+        target_url = qdrant_url or os.getenv("QDRANT_URL")
+        self.qdrant_client = None
+        if target_url and QdrantClient is not None:
+            try:
+                self.qdrant_client = QdrantClient(url=target_url)
+            except Exception:
+                self.qdrant_client = None
 
     def ingest(self, request: IngestRequest, embeddings: list[list[float]]) -> None:
         """Store embeddings and BM25 passages atomically for a tenant/doc."""

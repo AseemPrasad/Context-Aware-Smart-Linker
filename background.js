@@ -1,10 +1,10 @@
-const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
+// Optional developer personal Groq fallback key (empty by default for security).
+// Users can configure their own key via Options page if desired.
+const GROQ_API_KEY = "";
 
-// Optional backend endpoint for the hybrid RAG retrieval engine.
-// When configured, the extension will query the backend first and fall back
-// to the direct Groq call if the backend is unreachable. Leaving this empty
-// keeps the original behavior unchanged.
-const BACKEND_BASE_URL = ""; // e.g. "https://your-backend.example.com"
+// Backend endpoint for the hybrid RAG & Due Diligence research engine.
+// Defaults to local backend; configurable via the Extension Options page.
+const BACKEND_BASE_URL = "http://localhost:8000";
 
 console.log("✅ CASL background loaded");
 
@@ -18,8 +18,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   (async () => {
     try {
-      const explanation = await explain(message.payload);
-      sendResponse({ explanation });
+      const result = await explain(message.payload);
+      if (typeof result === "object" && result !== null) {
+        sendResponse({
+          explanation: result.explanation || result.executive_summary || "",
+          structured: result
+        });
+      } else {
+        sendResponse({ explanation: result });
+      }
     } catch (err) {
       console.error("❌ Explanation error:", err);
       sendResponse({ explanation: "Explanation request failed" });
@@ -41,25 +48,72 @@ async function explain(payload) {
   return await explainWithGroq(payload); // original behavior when unset/down
 }
 
-// Calls the backend retrieval engine and returns its explanation.
+// Calls the backend due-diligence engine and returns its structured response.
 async function explainWithBackend({ term, title, paragraph, tenantId }) {
-  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/search`, {
+  let targetUrl = BACKEND_BASE_URL;
+  let headers = { "Content-Type": "application/json" };
+  let resolvedTenant = tenantId || "default";
+
+  // Check custom enterprise settings if available
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      const cfg = await chrome.storage.local.get(["caslGatewayUrl", "caslTenantId", "caslApiKey"]);
+      if (cfg.caslGatewayUrl) targetUrl = cfg.caslGatewayUrl;
+      if (cfg.caslTenantId && (!tenantId || tenantId === "default")) resolvedTenant = cfg.caslTenantId;
+      if (cfg.caslApiKey) headers["Authorization"] = `Bearer ${cfg.caslApiKey}`;
+    }
+  } catch (_) {}
+
+  const res = await fetch(`${targetUrl}/api/v1/finance/explain`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: headers,
     body: JSON.stringify({
-      tenant_id: tenantId || "default",
-      query: term,
-      top_k: 50,
-      use_rerank: true,
+      term: term,
+      surrounding_context: paragraph || "",
+      page_title: title || "",
+      tenant_id: resolvedTenant,
+      strict_citations: true
     }),
   });
-  if (!res.ok) throw new Error(`Backend search failed: ${res.status}`);
+  if (res.status === 402) {
+    const errorData = await res.json().catch(() => ({}));
+    return {
+      quotaExceeded: true,
+      explanation: errorData.detail || "Monthly research credit quota exceeded. Please contact your administrator.",
+      structured: {
+        executive_summary: errorData.detail || "Monthly credit quota exceeded. Upgrade your workspace plan to resume research.",
+        risk_implications: "Billing hard cap enforced. Credit consumption halted.",
+        citations: []
+      }
+    };
+  }
+  if (!res.ok) throw new Error(`Backend due-diligence request failed: ${res.status}`);
   const data = await res.json();
-  const context = (data.hits || []).map((h) => h.passage).join("\n\n");
-  return context || "No relevant context found.";
+  return data;
 }
 
 async function explainWithGroq({ term, title, paragraph }) {
+  // Check if analyst has configured a personal key in Extension Options
+  let activeGroqKey = GROQ_API_KEY;
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      const stored = await chrome.storage.local.get(["caslUserGroqKey"]);
+      if (stored?.caslUserGroqKey) activeGroqKey = stored.caslUserGroqKey;
+    }
+  } catch (_) {}
+
+  // If no personal key is available, return an informative enterprise offline message
+  if (!activeGroqKey) {
+    return {
+      explanation: "CASL Gateway is currently offline. Please contact your workspace administrator or check your connection in Extension Options.",
+      structured: {
+        executive_summary: "Enterprise Ingress Unreachable: The CASL backend service is offline. Please verify network connectivity or Gateway URL in Extension Settings.",
+        risk_implications: "Offline mode active. Real-time regulatory due diligence citations are paused.",
+        citations: []
+      }
+    };
+  }
+
   const prompt = `
 Explain the term "${term}" in the context of the webpage titled "${title}".
 
@@ -72,7 +126,7 @@ Respond in exactly 2 short, clear sentences.
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      Authorization: `Bearer ${activeGroqKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

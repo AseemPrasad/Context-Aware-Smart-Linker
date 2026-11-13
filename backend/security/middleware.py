@@ -37,7 +37,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = auth_header.replace("Bearer ", "") if auth_header else None
 
         if token:
-            # Validate token
+            # Check enterprise JWT (OIDC/Okta/Auth0) first
+            from backend.security.jwt_auth import get_jwt_validator
+            jwt_claims = get_jwt_validator().decode_and_validate(token)
+            if jwt_claims:
+                resolved_tenant = jwt_claims.get("resolved_tenant_id", "default")
+                request.state.tenant_id = resolved_tenant
+                request.state.user_id = jwt_claims.get("sub", "enterprise_user")
+                request.state.user_role = jwt_claims.get("role", "user")
+                logger.debug(f"Enterprise OIDC Auth success: tenant={resolved_tenant}")
+                return await call_next(request)
+
+            # Validate legacy/internal token
             payload = self.validator.validate(token)
 
             if payload:

@@ -91,6 +91,16 @@ class CeleryConfig:
             "task_default_routing_key": "default",
             "worker_max_tasks_per_child": self.celery_max_tasks_per_child,
             "queues": self._get_queues_config(),
+            "beat_schedule": self._get_beat_schedule(),
+        }
+
+    def _get_beat_schedule(self) -> dict:
+        """Get periodic task schedule for Celery Beat."""
+        return {
+            "sync-sec-edgar-filings-every-15-min": {
+                "task": "backend.tasks.sec_edgar_pipeline.sync_latest_sec_filings_task",
+                "schedule": 900.0,  # 15 minutes
+            }
         }
 
     def _get_task_routes(self) -> dict:

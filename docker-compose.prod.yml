@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  casl-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: casl-api-prod
+    ports:
+      - "8000:8000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - ENABLE_REDIS_METER=true
+      - TELEMETRY_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - AUTH_ENABLED=true
+      - BILLING_ENABLED=true
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: casl-qdrant-prod
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: casl-redis-prod
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: casl-celery-worker-prod
+    command: celery -A backend.tasks.celery_app worker --loglevel=info -Q default,high_priority,batch_indexing
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: casl-celery-beat-prod
+    command: celery -A backend.tasks.celery_app beat --loglevel=info
+    environment:
+      - REDIS_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    container_name: casl-jaeger-prod
+    ports:
+      - "16686:16686" # Web UI
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  redis_data:
+  huggingface_cache:
+

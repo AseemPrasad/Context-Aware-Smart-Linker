@@ -39,9 +39,8 @@ class HybridRetriever:
 
     def _load_encoder(self) -> object:
         if self._encoder is None:
-            from sentence_transformers import SentenceTransformer
-
-            self._encoder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+            from backend.core.encoder import get_encoder
+            self._encoder = get_encoder()
         return self._encoder
 
     def _dense_rank(self, request: SearchRequest, top_k: int) -> list[int]:

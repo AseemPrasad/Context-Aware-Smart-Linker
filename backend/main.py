@@ -8,9 +8,12 @@ independently.
 
 import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
 from backend.api.stream_endpoints import router as stream_router
+from backend.domains.finance.routes import router as finance_router
+from backend.billing.routes import router as billing_router
 from backend.cache.monitor import get_cache_monitor
 from backend.gateway.endpoint import router as gateway_router
 from backend.middleware.telemetry import TelemetryMiddleware
@@ -29,6 +32,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Enable CORS for browser extensions, web HUDs, and client apps
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Add authentication middleware (optional)
 if os.getenv("AUTH_ENABLED", "false").lower() == "true":
     app.add_middleware(AuthMiddleware)
@@ -42,6 +54,8 @@ app.include_router(gateway_router)
 app.include_router(tasks_router)
 app.include_router(monitoring_router)
 app.include_router(stream_router)
+app.include_router(finance_router)
+app.include_router(billing_router)
 
 
 @app.get("/health")
