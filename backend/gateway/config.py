@@ -6,7 +6,7 @@ Centralizes all gateway settings with env var support.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -42,7 +42,7 @@ class GatewayConfig:
     budget_warning_threshold_percent: float = float(os.getenv("BUDGET_WARNING_THRESHOLD", "80"))
 
     # Provider priority order (comma-separated)
-    provider_priority: list[str] = []
+    provider_priority: list[str] = field(default_factory=list)
 
     # Complexity routing
     complexity_routing_enabled: bool = os.getenv("COMPLEXITY_ROUTING_ENABLED", "true").lower() == "true"

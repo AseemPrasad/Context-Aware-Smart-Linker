@@ -19,7 +19,10 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:
+    BM25Okapi = None
 
 from backend.schemas.retrieval import IngestRequest
 
