@@ -59,6 +59,18 @@ async function explainWithBackend({ term, title, paragraph, tenantId }) {
       strict_citations: true
     }),
   });
+  if (res.status === 402) {
+    const errorData = await res.json().catch(() => ({}));
+    return {
+      quotaExceeded: true,
+      explanation: errorData.detail || "Monthly research credit quota exceeded. Please contact your administrator.",
+      structured: {
+        executive_summary: errorData.detail || "Monthly credit quota exceeded. Upgrade your workspace plan to resume research.",
+        risk_implications: "Billing hard cap enforced. Credit consumption halted.",
+        citations: []
+      }
+    };
+  }
   if (!res.ok) throw new Error(`Backend due-diligence request failed: ${res.status}`);
   const data = await res.json();
   return data;

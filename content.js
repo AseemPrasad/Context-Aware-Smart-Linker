@@ -2,7 +2,15 @@ let aiBtn = null;
 let tooltip = null;
 
 let cachedText = "";
-let cachedContext = "";
+let activeTooltipTimer = null;
+let currentSelectionSeq = 0;
+
+function clearTooltipTimer() {
+  if (activeTooltipTimer) {
+    clearTimeout(activeTooltipTimer);
+    activeTooltipTimer = null;
+  }
+}
 
 // Last recorded selection bounding rect for accurate in-viewport positioning
 let lastSelectionRect = null;
@@ -61,9 +69,19 @@ function showButton(rect) {
 
   aiBtn.addEventListener("mousedown", e => e.preventDefault());
 
-  aiBtn.addEventListener("click", (e) => {
+  aiBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
+    currentSelectionSeq++;
+    const seq = currentSelectionSeq;
     showTooltip("Thinking… 🤖");
+
+    // Ensure tenantId sync is awaited if chrome.storage is present
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+        const stored = await chrome.storage.local.get(["caslTenantId"]);
+        if (stored?.caslTenantId) cachedTenantId = stored.caslTenantId;
+      }
+    } catch (_) {}
 
     try {
       chrome.runtime.sendMessage(
@@ -77,6 +95,7 @@ function showButton(rect) {
           }
         },
         (response) => {
+          if (seq !== currentSelectionSeq) return; // Discard stale race responses
           if (chrome.runtime.lastError) {
             showTooltip("Extension reloaded — refresh page");
             return;
@@ -97,6 +116,7 @@ function showButton(rect) {
 }
 
 function showStructuredTooltip(data) {
+  clearTooltipTimer();
   tooltip?.remove();
 
   tooltip = document.createElement("div");
@@ -155,10 +175,14 @@ function showStructuredTooltip(data) {
 
   document.body.appendChild(tooltip);
 
-  setTimeout(() => tooltip?.remove(), 12000);
+  activeTooltipTimer = setTimeout(() => {
+    tooltip?.remove();
+    activeTooltipTimer = null;
+  }, 12000);
 }
 
 function showTooltip(text) {
+  clearTooltipTimer();
   tooltip?.remove();
 
   tooltip = document.createElement("div");
@@ -177,7 +201,10 @@ function showTooltip(text) {
 
   document.body.appendChild(tooltip);
 
-  setTimeout(() => tooltip?.remove(), 8000);
+  activeTooltipTimer = setTimeout(() => {
+    tooltip?.remove();
+    activeTooltipTimer = null;
+  }, 8000);
 }
 
 window.addEventListener("beforeunload", () => {

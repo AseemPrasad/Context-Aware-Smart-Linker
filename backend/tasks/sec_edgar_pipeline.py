@@ -112,7 +112,7 @@ class SecEdgarPipeline:
 
 # Celery task hook (invocable via Celery worker or async loop)
 def sync_latest_sec_filings_task(mock_feed: Optional[str] = None) -> Dict[str, Any]:
-    """Sync task for Celery beat or manual ingestion trigger."""
+    """Sync task for Celery beat or manual ingestion trigger with deep filing ingestion."""
     pipeline = SecEdgarPipeline()
     if mock_feed:
         filings = pipeline.parse_atom_feed(mock_feed)
@@ -126,5 +126,25 @@ def sync_latest_sec_filings_task(mock_feed: Optional[str] = None) -> Dict[str, A
             logger.warning("Network fetch for SEC feed failed: %s", err)
             return {"status": "skipped", "reason": str(err), "ingested_count": 0}
 
-    return {"status": "success", "filings_discovered": len(filings)}
+    total_chunks = 0
+    for filing in filings[:5]:  # Batch top 5 filings to respect SEC rate limit (10 req/s)
+        accession = filing.get("accession")
+        if not accession or accession in pipeline.seen_accessions:
+            continue
+        pipeline.seen_accessions.add(accession)
+        
+        # Ingest filing summary or body
+        body_text = filing.get("summary") or filing.get("title") or ""
+        if body_text.strip():
+            chunks = pipeline.ingest_filing_text(
+                document_text=body_text,
+                ticker=filing.get("ticker", "SEC"),
+                form_type=filing.get("form_type", "FILING"),
+                document_title=filing.get("title", ""),
+                source_url=filing.get("link", ""),
+                tenant_id="public_markets"
+            )
+            total_chunks += chunks
+
+    return {"status": "success", "filings_discovered": len(filings), "ingested_chunks": total_chunks}
 

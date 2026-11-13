@@ -8,6 +8,7 @@ independently.
 
 import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
 from backend.api.stream_endpoints import router as stream_router
@@ -29,6 +30,15 @@ app = FastAPI(
     title="CASL Backend",
     description="Multi-tenant hybrid RAG retrieval engine.",
     version="0.1.0",
+)
+
+# Enable CORS for browser extensions, web HUDs, and client apps
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Add authentication middleware (optional)

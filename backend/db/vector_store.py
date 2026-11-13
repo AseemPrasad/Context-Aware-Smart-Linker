@@ -75,8 +75,11 @@ class Bm25Index:
         return self._passages[tenant_id][idx]
 
     def document_for_passage(self, tenant_id: str, idx: int) -> str:
-        # For simplicity, track document_id per passage in a parallel list.
-        return getattr(self, "_doc_ids", {}).get(tenant_id, [""])[idx]
+        # Per-tenant doc_ids tracking
+        doc_ids = getattr(self, "_doc_ids", {}).get(tenant_id, [])
+        if 0 <= idx < len(doc_ids):
+            return doc_ids[idx]
+        return ""
 
 
 class VectorStore:
