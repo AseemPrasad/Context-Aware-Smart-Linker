@@ -1,10 +1,8 @@
 const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
 
-// Optional backend endpoint for the hybrid RAG retrieval engine.
-// When configured, the extension will query the backend first and fall back
-// to the direct Groq call if the backend is unreachable. Leaving this empty
-// keeps the original behavior unchanged.
-const BACKEND_BASE_URL = ""; // e.g. "https://your-backend.example.com"
+// Backend endpoint for the hybrid RAG & Due Diligence research engine.
+// Defaults to local backend; automatically falls back to Groq if unreachable.
+const BACKEND_BASE_URL = "http://localhost:8000";
 
 console.log("✅ CASL background loaded");
 
@@ -18,8 +16,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   (async () => {
     try {
-      const explanation = await explain(message.payload);
-      sendResponse({ explanation });
+      const result = await explain(message.payload);
+      if (typeof result === "object" && result !== null) {
+        sendResponse({
+          explanation: result.explanation || result.executive_summary || "",
+          structured: result
+        });
+      } else {
+        sendResponse({ explanation: result });
+      }
     } catch (err) {
       console.error("❌ Explanation error:", err);
       sendResponse({ explanation: "Explanation request failed" });
@@ -41,22 +46,22 @@ async function explain(payload) {
   return await explainWithGroq(payload); // original behavior when unset/down
 }
 
-// Calls the backend retrieval engine and returns its explanation.
+// Calls the backend due-diligence engine and returns its structured response.
 async function explainWithBackend({ term, title, paragraph, tenantId }) {
-  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/search`, {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/finance/explain`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      term: term,
+      surrounding_context: paragraph || "",
+      page_title: title || "",
       tenant_id: tenantId || "default",
-      query: term,
-      top_k: 50,
-      use_rerank: true,
+      strict_citations: true
     }),
   });
-  if (!res.ok) throw new Error(`Backend search failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Backend due-diligence request failed: ${res.status}`);
   const data = await res.json();
-  const context = (data.hits || []).map((h) => h.passage).join("\n\n");
-  return context || "No relevant context found.";
+  return data;
 }
 
 async function explainWithGroq({ term, title, paragraph }) {

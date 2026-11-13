@@ -63,7 +63,7 @@ class FinancialDocumentParser:
                             "ticker": ticker.upper(),
                             "form_type": form_type.upper(),
                             "section": current_section,
-                            "length": len(chunk_text)
+                            "length": str(len(chunk_text))
                         }
                     })
                 current_chunk = [clean_sec]
@@ -78,7 +78,7 @@ class FinancialDocumentParser:
                     "ticker": ticker.upper(),
                     "form_type": form_type.upper(),
                     "section": current_section,
-                    "length": len(chunk_text)
+                    "length": str(len(chunk_text))
                 }
             })
 

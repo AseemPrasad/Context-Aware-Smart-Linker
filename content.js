@@ -66,7 +66,11 @@ function showButton(rect) {
             showTooltip("Extension reloaded — refresh page");
             return;
           }
-          showTooltip(response?.explanation || "No response");
+          if (response?.structured && response.structured.executive_summary) {
+            showStructuredTooltip(response.structured);
+          } else {
+            showTooltip(response?.explanation || "No response");
+          }
         }
       );
     } catch {
@@ -75,6 +79,61 @@ function showButton(rect) {
   });
 
   document.body.appendChild(aiBtn);
+}
+
+function showStructuredTooltip(data) {
+  tooltip?.remove();
+
+  tooltip = document.createElement("div");
+  tooltip.className = "casl-tooltip";
+
+  const header = document.createElement("div");
+  header.className = "casl-diligence-header";
+  header.textContent = `CASL Verified • ${data.term || "Term"}`;
+  tooltip.appendChild(header);
+
+  const summary = document.createElement("div");
+  summary.textContent = data.executive_summary;
+  tooltip.appendChild(summary);
+
+  if (data.risk_implications) {
+    const risk = document.createElement("div");
+    risk.style.marginTop = "6px";
+    risk.style.fontSize = "11px";
+    risk.style.color = "#fca5a5";
+    risk.textContent = `Risk: ${data.risk_implications}`;
+    tooltip.appendChild(risk);
+  }
+
+  if (Array.isArray(data.citations) && data.citations.length > 0) {
+    const citationContainer = document.createElement("div");
+    citationContainer.className = "casl-citation-container";
+    citationContainer.textContent = "Sources: ";
+
+    data.citations.forEach(c => {
+      const pill = document.createElement("a");
+      pill.className = "casl-citation-pill";
+      pill.textContent = `${c.ticker || "SEC"} ${c.section || c.form_type || "Filing"}`;
+      pill.title = c.excerpt || "";
+      if (c.source_url) {
+        pill.href = c.source_url;
+        pill.target = "_blank";
+      } else {
+        pill.href = "#";
+        pill.addEventListener("click", (e) => e.preventDefault());
+      }
+      citationContainer.appendChild(pill);
+    });
+
+    tooltip.appendChild(citationContainer);
+  }
+
+  tooltip.style.top = `${window.scrollY + 120}px`;
+  tooltip.style.left = `${window.scrollX + 120}px`;
+
+  document.body.appendChild(tooltip);
+
+  setTimeout(() => tooltip?.remove(), 12000);
 }
 
 function showTooltip(text) {

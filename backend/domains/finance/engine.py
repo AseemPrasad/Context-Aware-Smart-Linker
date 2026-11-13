@@ -13,6 +13,7 @@ from backend.domains.finance.schemas import (
     FinancialCitation,
 )
 from backend.models.reranker import RerankerWorker
+from backend.schemas.retrieval import SearchRequest
 from backend.services.retrieval_engine import HybridRetriever
 
 
@@ -46,25 +47,25 @@ class DueDiligenceEngine:
 
         # 2. Query retrieval store
         query_text = f"{request.term} {request.surrounding_context}"
-        hits = await self.retriever.search(
+        search_req = SearchRequest(
             query=query_text,
             tenant_id=request.tenant_id,
             top_k=5,
         )
+        candidates = await self.retriever.retrieve(search_req, top_k=5)
 
-        # 3. Build grounded citations from verified hits
+        # 3. Build grounded citations from verified candidates
         citations: List[FinancialCitation] = []
-        for hit in hits:
-            meta = hit.metadata or {}
+        for cand in candidates:
             citations.append(
                 FinancialCitation(
-                    source_id=hit.id,
-                    document_title=meta.get("document_title", request.page_title or "Financial Source"),
-                    ticker=meta.get("ticker", ticker),
-                    form_type=meta.get("form_type", "Filing/Contract"),
-                    section=meta.get("section", "Disclosure Section"),
-                    excerpt=hit.content[:240] + ("..." if len(hit.content) > 240 else ""),
-                    source_url=meta.get("source_url"),
+                    source_id=cand.document_id,
+                    document_title=request.page_title or "Financial Source",
+                    ticker=ticker,
+                    form_type="Filing/Contract",
+                    section="Disclosure Section",
+                    excerpt=cand.passage[:240] + ("..." if len(cand.passage) > 240 else ""),
+                    source_url=None,
                 )
             )
 
