@@ -1,7 +1,9 @@
-const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
+// Optional developer personal Groq fallback key (empty by default for security).
+// Users can configure their own key via Options page if desired.
+const GROQ_API_KEY = "";
 
 // Backend endpoint for the hybrid RAG & Due Diligence research engine.
-// Defaults to local backend; automatically falls back to Groq if unreachable.
+// Defaults to local backend; configurable via the Extension Options page.
 const BACKEND_BASE_URL = "http://localhost:8000";
 
 console.log("✅ CASL background loaded");
@@ -48,14 +50,28 @@ async function explain(payload) {
 
 // Calls the backend due-diligence engine and returns its structured response.
 async function explainWithBackend({ term, title, paragraph, tenantId }) {
-  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/finance/explain`, {
+  let targetUrl = BACKEND_BASE_URL;
+  let headers = { "Content-Type": "application/json" };
+  let resolvedTenant = tenantId || "default";
+
+  // Check custom enterprise settings if available
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      const cfg = await chrome.storage.local.get(["caslGatewayUrl", "caslTenantId", "caslApiKey"]);
+      if (cfg.caslGatewayUrl) targetUrl = cfg.caslGatewayUrl;
+      if (cfg.caslTenantId && (!tenantId || tenantId === "default")) resolvedTenant = cfg.caslTenantId;
+      if (cfg.caslApiKey) headers["Authorization"] = `Bearer ${cfg.caslApiKey}`;
+    }
+  } catch (_) {}
+
+  const res = await fetch(`${targetUrl}/api/v1/finance/explain`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: headers,
     body: JSON.stringify({
       term: term,
       surrounding_context: paragraph || "",
       page_title: title || "",
-      tenant_id: tenantId || "default",
+      tenant_id: resolvedTenant,
       strict_citations: true
     }),
   });
@@ -77,6 +93,27 @@ async function explainWithBackend({ term, title, paragraph, tenantId }) {
 }
 
 async function explainWithGroq({ term, title, paragraph }) {
+  // Check if analyst has configured a personal key in Extension Options
+  let activeGroqKey = GROQ_API_KEY;
+  try {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      const stored = await chrome.storage.local.get(["caslUserGroqKey"]);
+      if (stored?.caslUserGroqKey) activeGroqKey = stored.caslUserGroqKey;
+    }
+  } catch (_) {}
+
+  // If no personal key is available, return an informative enterprise offline message
+  if (!activeGroqKey) {
+    return {
+      explanation: "CASL Gateway is currently offline. Please contact your workspace administrator or check your connection in Extension Options.",
+      structured: {
+        executive_summary: "Enterprise Ingress Unreachable: The CASL backend service is offline. Please verify network connectivity or Gateway URL in Extension Settings.",
+        risk_implications: "Offline mode active. Real-time regulatory due diligence citations are paused.",
+        citations: []
+      }
+    };
+  }
+
   const prompt = `
 Explain the term "${term}" in the context of the webpage titled "${title}".
 
@@ -89,7 +126,7 @@ Respond in exactly 2 short, clear sentences.
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${GROQ_API_KEY}`,
+      Authorization: `Bearer ${activeGroqKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

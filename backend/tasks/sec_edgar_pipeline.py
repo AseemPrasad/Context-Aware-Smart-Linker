@@ -18,6 +18,7 @@ from backend.core.encoder import get_encoder
 from backend.db.vector_store import VectorStore
 from backend.domains.finance.parser import FinancialDocumentParser
 from backend.schemas.retrieval import IngestRequest
+from backend.tasks.sec_document_fetcher import SecDocumentFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -133,8 +134,12 @@ def sync_latest_sec_filings_task(mock_feed: Optional[str] = None) -> Dict[str, A
             continue
         pipeline.seen_accessions.add(accession)
         
-        # Ingest filing summary or body
-        body_text = filing.get("summary") or filing.get("title") or ""
+        # Attempt deep filing fetch from primary link, falling back to summary
+        full_content = None
+        if filing.get("link"):
+            full_content = SecDocumentFetcher.fetch_filing_content(filing["link"])
+
+        body_text = full_content or filing.get("summary") or filing.get("title") or ""
         if body_text.strip():
             chunks = pipeline.ingest_filing_text(
                 document_text=body_text,

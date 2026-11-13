@@ -3,8 +3,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from backend.billing.meter import UsageMeter, get_usage_meter
 from backend.billing.models import PlanTier, UsageSummaryResponse
+from backend.billing.stripe_webhook import router as stripe_router
 
 router = APIRouter(prefix="/api/v1/billing", tags=["SaaS Billing & Usage"])
+router.include_router(stripe_router)
 
 
 @router.get("/usage/{tenant_id}", response_model=UsageSummaryResponse)

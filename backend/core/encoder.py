@@ -40,7 +40,14 @@ class EncoderSingleton:
 
             try:
                 import os
-                if os.getenv("CASL_FAST_EMBEDDINGS", "true").lower() == "true":
+                # Check external hosted inference gateway first
+                if os.getenv("EMBEDDING_API_URL"):
+                    from backend.core.remote_encoder import RemoteAPIEncoder
+                    self._encoder = RemoteAPIEncoder(
+                        api_url=os.environ["EMBEDDING_API_URL"],
+                        api_key=os.getenv("EMBEDDING_API_KEY", ""),
+                    )
+                elif os.getenv("CASL_FAST_EMBEDDINGS", "true").lower() == "true":
                     self._encoder = FastEncoder()
                 else:
                     from sentence_transformers import SentenceTransformer

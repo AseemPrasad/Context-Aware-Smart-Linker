@@ -103,5 +103,13 @@ _usage_meter = UsageMeter()
 
 
 def get_usage_meter() -> UsageMeter:
+    """Returns persistent RedisUsageMeter if REDIS_URL is active, else thread-safe in-memory meter."""
+    redis_url = os.getenv("REDIS_URL") or os.getenv("REDIS_BROKER_URL")
+    if redis_url and os.getenv("ENABLE_REDIS_METER", "false").lower() == "true":
+        try:
+            from backend.billing.redis_meter import RedisUsageMeter
+            return RedisUsageMeter(redis_url=redis_url)
+        except Exception:
+            pass
     return _usage_meter
 
